@@ -1,0 +1,6 @@
+rootProject.name = 'persistence'
+include 'mongo'
+include 'core'
+include 'redis'
+include 'redis-guice'
+

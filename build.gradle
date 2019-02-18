@@ -1,0 +1,75 @@
+plugins {
+    id 'io.spring.dependency-management' version '1.0.6.RELEASE'
+    id 'io.franzbecker.gradle-lombok' version '1.14'
+}
+allprojects {
+    group 'com.github.ixtf.persistence'
+    version '1.0'
+
+    apply plugin: 'idea'
+    apply plugin: 'maven'
+    apply plugin: 'maven-publish'
+    apply plugin: "io.spring.dependency-management"
+
+    repositories {
+        mavenLocal()
+        mavenCentral()
+        maven { url 'https://plugins.gradle.org/m2' }
+        maven { url 'https://jitpack.io' }
+    }
+
+    dependencyManagement {
+        imports {
+            mavenBom "com.github.ixtf:bom:${bomVersion}"
+        }
+    }
+}
+subprojects {
+    apply plugin: 'java'
+    sourceCompatibility = 11
+    targetCompatibility = 11
+    apply plugin: 'io.franzbecker.gradle-lombok'
+    lombok {
+        version = "${lombokVersion}"
+        sha256 = ""
+    }
+
+    dependencies {
+        compile "com.github.ixtf.japp:codec"
+        compile "com.google.inject:guice"
+        compile group: 'cglib', name: 'cglib', version: '3.2.10'
+        compile group: 'org.reactivestreams', name: 'reactive-streams', version: '1.0.2'
+
+        compileOnly "javax:javaee-api"
+
+        testCompile "junit:junit"
+    }
+
+    jar.manifest {
+        attributes(
+                'Implementation-Title': name,
+                'Implementation-Version': version,
+                'Built-By': System.getProperty('user.name'),
+                'Built-JDK': System.getProperty('java.version'),
+                'Source-Compatibility': sourceCompatibility,
+                'Target-Compatibility': targetCompatibility
+        )
+    }
+    javadoc.options {
+        encoding = 'UTF-8'
+        use = true
+        links 'https://docs.oracle.com/javase/8/docs/api/'
+    }
+    task javadocJar(type: Jar) {
+        classifier = 'javadoc'
+        from javadoc
+    }
+    task sourcesJar(type: Jar) {
+        classifier = 'sources'
+        from sourceSets.main.allSource
+    }
+    artifacts {
+        archives javadocJar, sourcesJar
+    }
+}
+

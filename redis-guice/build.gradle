@@ -1,0 +1,4 @@
+dependencies {
+    compile project(":redis"),
+            "com.google.inject:guice"
+}

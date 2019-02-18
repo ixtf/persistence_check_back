@@ -1,0 +1,4 @@
+dependencies {
+    compile project(":core"),
+            "redis.clients:jedis:3.0.1"
+}
