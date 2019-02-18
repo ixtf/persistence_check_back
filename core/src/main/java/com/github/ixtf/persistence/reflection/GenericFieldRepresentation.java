@@ -1,21 +1,54 @@
 package com.github.ixtf.persistence.reflection;
 
+import lombok.Getter;
+
 import javax.persistence.AttributeConverter;
 import javax.persistence.Embeddable;
 import javax.persistence.Entity;
 import java.lang.reflect.Field;
 import java.lang.reflect.ParameterizedType;
 import java.util.*;
+import java.util.stream.Collector;
+import java.util.stream.Collectors;
 
 public class GenericFieldRepresentation extends AbstractFieldRepresentation {
+    @Getter
+    private final ParameterizedType parameterizedType;
+    @Getter
+    private final Class rawType;
+    @Getter
+    private final Class elementType;
+    @Getter
+    private final boolean entityField;
+    @Getter
+    private final boolean embeddableField;
 
     GenericFieldRepresentation(FieldType type, Field field, String name, Class<? extends AttributeConverter> converter) {
         super(type, name, field, converter);
+        parameterizedType = ParameterizedType.class.cast(getNativeField().getGenericType());
+        rawType = Class.class.cast(parameterizedType.getRawType());
+        elementType = Class.class.cast(parameterizedType.getActualTypeArguments()[0]);
+        entityField = elementType.getAnnotation(Entity.class) != null;
+        embeddableField = elementType.getAnnotation(Embeddable.class) != null;
     }
 
     @Override
     public boolean isId() {
         return false;
+    }
+
+    public Collector getCollector() {
+        Class<?> type = getNativeField().getType();
+        if (Deque.class.equals(type) || Queue.class.equals(type)) {
+            return Collectors.toCollection(LinkedList::new);
+        } else if (List.class.equals(type) || Iterable.class.equals(type)) {
+            return Collectors.toCollection(ArrayList::new);
+        } else if (NavigableSet.class.equals(type) || SortedSet.class.equals(type)) {
+            return Collectors.toCollection(TreeSet::new);
+        } else if (Set.class.equals(type)) {
+            return Collectors.toCollection(HashSet::new);
+        }
+        throw new UnsupportedOperationException("This collection is not supported yet: " + type);
     }
 
     @Override
@@ -35,45 +68,6 @@ public class GenericFieldRepresentation extends AbstractFieldRepresentation {
     @Override
     public int hashCode() {
         return Objects.hash(type, nativeField, colName);
-    }
-
-    public boolean isEmbeddable() {
-        return isEmbeddableField() || isEntityField();
-    }
-
-    private boolean isEntityField() {
-        return hasFieldAnnotation(Entity.class);
-    }
-
-    private boolean isEmbeddableField() {
-        return hasFieldAnnotation(Embeddable.class);
-    }
-
-    private boolean hasFieldAnnotation(Class<?> annotation) {
-        return Class.class.cast(ParameterizedType.class.cast(getNativeField()
-                .getGenericType())
-                .getActualTypeArguments()[0])
-                .getAnnotation(annotation) != null;
-    }
-
-    public Class getElementType() {
-        return Class.class.cast(ParameterizedType.class.cast(getNativeField()
-                .getGenericType())
-                .getActualTypeArguments()[0]);
-    }
-
-    public Collection getCollectionInstance() {
-        Class<?> type = getNativeField().getType();
-        if (Deque.class.equals(type) || Queue.class.equals(type)) {
-            return new LinkedList<>();
-        } else if (List.class.equals(type) || Iterable.class.equals(type)) {
-            return new ArrayList<>();
-        } else if (NavigableSet.class.equals(type) || SortedSet.class.equals(type)) {
-            return new TreeSet<>();
-        } else if (Set.class.equals(type)) {
-            return new HashSet<>();
-        }
-        throw new UnsupportedOperationException("This collection is not supported yet: " + type);
     }
 
     @Override

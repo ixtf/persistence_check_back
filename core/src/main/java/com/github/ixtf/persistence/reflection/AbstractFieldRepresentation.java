@@ -2,6 +2,7 @@ package com.github.ixtf.persistence.reflection;
 
 import lombok.EqualsAndHashCode;
 import lombok.Getter;
+import lombok.SneakyThrows;
 import lombok.ToString;
 
 import javax.persistence.AttributeConverter;
@@ -28,14 +29,18 @@ abstract class AbstractFieldRepresentation implements FieldRepresentation {
     protected final String colName;
     @Getter
     protected final String fieldName;
+    @Getter
+    private final Class<?> fieldType;
     @ToString.Include
     protected final Class<? extends AttributeConverter> converter;
 
+    @SneakyThrows
     AbstractFieldRepresentation(FieldType type, String colName, Field nativeField, Class<? extends AttributeConverter> converter) {
         this.type = type;
         this.colName = colName;
         this.nativeField = nativeField;
         this.fieldName = nativeField.getName();
+        this.fieldType = nativeField.getType();
         this.converter = converter;
     }
 

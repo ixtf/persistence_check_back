@@ -2,6 +2,7 @@ package com.github.ixtf.persistence.subscribers;
 
 import com.google.common.collect.Lists;
 import lombok.SneakyThrows;
+import lombok.extern.slf4j.Slf4j;
 import org.reactivestreams.Subscriber;
 import org.reactivestreams.Subscription;
 
@@ -13,6 +14,7 @@ import java.util.concurrent.TimeUnit;
 /**
  * @author jzb 2019-02-14
  */
+@Slf4j
 public class ObservableSubscriber<T> implements Subscriber<T> {
     private final List<T> received;
     private final List<Throwable> errors;
@@ -33,6 +35,7 @@ public class ObservableSubscriber<T> implements Subscriber<T> {
 
     @Override
     public void onNext(final T t) {
+        log.debug("onNext");
         received.add(t);
     }
 

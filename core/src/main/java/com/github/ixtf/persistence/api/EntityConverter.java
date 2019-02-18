@@ -2,6 +2,7 @@ package com.github.ixtf.persistence.api;
 
 import com.github.ixtf.persistence.reflection.ClassRepresentation;
 import com.github.ixtf.persistence.reflection.ClassRepresentations;
+import com.github.ixtf.persistence.reflection.FieldRepresentation;
 import com.google.common.cache.CacheBuilder;
 import com.google.common.cache.CacheLoader;
 import com.google.common.cache.LoadingCache;
@@ -20,10 +21,24 @@ public interface EntityConverter {
         }
     });
 
+    static AttributeConverter attributeConverter(FieldRepresentation fieldRepresentation) {
+        return fieldRepresentation.getConverter()
+                .map(it -> {
+                    try {
+                        return CONVERTER_CACHE.get(it);
+                    } catch (Exception e) {
+                        throw new RuntimeException(e);
+                    }
+                })
+                .orElse(null);
+    }
+
     default <T> T toEntity(Class<T> entityClass, Object dbData) {
         final ClassRepresentation<T> classRepresentation = ClassRepresentations.create(entityClass);
         return toEntity(classRepresentation, dbData);
     }
 
     <T> T toEntity(ClassRepresentation<T> entityClass, Object dbData);
+
+    <DB> DB toDbData(DB dbData, Object entityInstance);
 }

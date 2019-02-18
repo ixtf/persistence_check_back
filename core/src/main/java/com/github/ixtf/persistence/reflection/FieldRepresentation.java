@@ -36,6 +36,8 @@ public interface FieldRepresentation extends Serializable {
      */
     String getFieldName();
 
+    Class getFieldType();
+
     boolean isId();
 
     /**

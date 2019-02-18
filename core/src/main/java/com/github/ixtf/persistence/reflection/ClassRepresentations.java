@@ -42,8 +42,17 @@ public final class ClassRepresentations {
         }
     });
 
+    public static ClassRepresentation<?> create(Object o) {
+        return create(o.getClass());
+    }
+
     @SneakyThrows
     public static ClassRepresentation create(Class entityClass) {
+        final String className = entityClass.getName();
+        if (J.contains(className, "CGLIB")) {
+            final String actualClassName = J.split(className, "$$")[0];
+            entityClass = Class.forName(actualClassName);
+        }
         return cache.get(entityClass);
     }
 
@@ -59,11 +68,12 @@ public final class ClassRepresentations {
     }
 
     private static FieldRepresentation to(Field field) {
-        FieldType fieldType = FieldType.of(field);
+        final FieldType fieldType = FieldType.of(field);
         makeAccessible(field);
-        Convert convert = field.getAnnotation(Convert.class);
-        boolean id = isIdField(field);
-        String columnName = id ? "_id" : getColumnName(field);
+        final Convert convert = field.getAnnotation(Convert.class);
+        final boolean id = isIdField(field);
+//        final String columnName = id ? "_id" : getColumnName(field);
+        final String columnName = getColumnName(field);
         FieldRepresentationBuilder builder = FieldRepresentation.builder().withColName(columnName)
                 .withField(field)
                 .withType(fieldType)

@@ -35,12 +35,11 @@ subprojects {
     }
 
     dependencies {
-        compile "com.github.ixtf.japp:codec"
-        compile "com.google.inject:guice"
-        compile group: 'cglib', name: 'cglib', version: '3.2.10'
-        compile group: 'org.reactivestreams', name: 'reactive-streams', version: '1.0.2'
-
-        compileOnly "javax:javaee-api"
+        compile "com.github.ixtf.japp:core",
+                "javax:javaee-api",
+                "cglib:cglib",
+                "commons-beanutils:commons-beanutils",
+                "org.reactivestreams:reactive-streams"
 
         testCompile "junit:junit"
     }

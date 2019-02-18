@@ -32,6 +32,7 @@ import java.util.stream.Collectors;
 import java.util.stream.IntStream;
 
 import static com.github.ixtf.japp.core.Constant.MAPPER;
+import static com.github.ixtf.persistence.mongo.Jmongo.ID_COL;
 import static com.mongodb.client.model.Filters.eq;
 
 /**
@@ -65,7 +66,7 @@ public class MongoTest {
             final String value = "test" + i;
             return new Document("test", value);
         }).collect(Collectors.toList());
-        final Document replace = new Document("_id", "5c647ff21fbfe4287be8a199")
+        final Document replace = new Document(ID_COL, "5c647ff21fbfe4287be8a199")
                 .append("replace-test", null)
                 .append("cdt", new Date())
                 .append("code-test", new Code("code-test"))

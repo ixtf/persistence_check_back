@@ -3,6 +3,7 @@ package com.github.ixtf.persistence.mongo;
 import com.github.ixtf.japp.core.J;
 import com.github.ixtf.persistence.api.EntityConverter;
 import com.github.ixtf.persistence.mongo.api.DocumentEntityConverter;
+import com.github.ixtf.persistence.mongo.api.MongoUnitOfWork;
 import com.github.ixtf.persistence.mongo.spi.MongoProvider;
 import com.github.ixtf.persistence.reflection.ClassRepresentation;
 import com.github.ixtf.persistence.reflection.ClassRepresentations;
@@ -35,15 +36,20 @@ import static java.util.stream.Collectors.toList;
  */
 @Slf4j
 public class Jmongo {
+    public static final String ID_COL = "_id";
     private static final MongoClientProviderRegistry MONGO_PROVIDERS = new MongoClientProviderRegistry();
 
+    public static MongoUnitOfWork uow() {
+        return new MongoUnitOfWork();
+    }
+
     public static <T> Optional<T> find(Class<T> entityClass, Object id) {
-        final Bson condition = eq("_id", id);
+        final Bson condition = eq(ID_COL, id);
         return query(entityClass, condition).findFirst();
     }
 
     public static <T> Stream<T> list(Class<T> entityClass, Iterable ids) {
-        final Bson condition = in("_id", ids);
+        final Bson condition = in(ID_COL, ids);
         return query(entityClass, condition);
     }
 

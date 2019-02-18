@@ -3,21 +3,25 @@ package com.github.ixtf.persistence.mongo.api;
 import com.github.ixtf.persistence.api.AbstractEntityConverter;
 import com.github.ixtf.persistence.api.EntityConverter;
 import com.github.ixtf.persistence.mongo.Jmongo;
+import com.github.ixtf.persistence.reflection.ClassRepresentation;
+import com.github.ixtf.persistence.reflection.ClassRepresentations;
 import com.github.ixtf.persistence.reflection.FieldRepresentation;
+import com.github.ixtf.persistence.reflection.GenericFieldRepresentation;
+import lombok.SneakyThrows;
 import lombok.extern.slf4j.Slf4j;
 import net.sf.cglib.proxy.Enhancer;
 import net.sf.cglib.proxy.LazyLoader;
+import org.apache.commons.beanutils.PropertyUtils;
 import org.apache.commons.collections4.IterableUtils;
 import org.bson.Document;
 import org.bson.types.ObjectId;
 
-import java.lang.reflect.Field;
-import java.util.List;
-import java.util.Set;
+import java.util.function.Function;
+import java.util.stream.Collector;
 import java.util.stream.StreamSupport;
 
+import static com.github.ixtf.persistence.mongo.Jmongo.ID_COL;
 import static java.util.stream.Collectors.toList;
-import static java.util.stream.Collectors.toSet;
 
 /**
  * @author jzb 2019-02-18
@@ -35,17 +39,16 @@ public class DocumentEntityConverter extends AbstractEntityConverter {
     @Override
     protected Object getColValue(FieldRepresentation fieldRepresentation, Object dbValue) {
         final Document document = (Document) dbValue;
-        final String colName = fieldRepresentation.getColName();
+        final String colName = fieldRepresentation.isId() ? ID_COL : fieldRepresentation.getColName();
         return document.get(colName);
     }
 
     @Override
-    protected Object getSubEntityFieldValue(Object entity, FieldRepresentation fieldRepresentation, Object colValue) {
-        final Field nativeField = fieldRepresentation.getNativeField();
-        final Class<?> subEntityClass = nativeField.getType();
+    protected Object convertToEntityAttribute_SubEntity(Object entity, FieldRepresentation fieldRepresentation, Object colValue) {
+        final Class<?> subEntityClass = fieldRepresentation.getFieldType();
         if (colValue instanceof String || colValue instanceof ObjectId) {
             final LazyLoader lazyLoader = () -> {
-                log.debug("lazyLoaderSubEntity[" + subEntityClass.getSimpleName() + "," + nativeField.getName() + "]");
+                log.debug("lazyLoaderSubEntity[" + entity.getClass().getSimpleName() + "," + fieldRepresentation.getFieldName() + "]");
                 return Jmongo.find(subEntityClass, colValue).orElse(null);
             };
             final Enhancer enhancer = new Enhancer();
@@ -56,43 +59,69 @@ public class DocumentEntityConverter extends AbstractEntityConverter {
     }
 
     @Override
-    protected Object getEmbeddableFieldValue(Object entity, FieldRepresentation fieldRepresentation, Object colValue) {
-        final Field nativeField = fieldRepresentation.getNativeField();
-        return toEntity(nativeField.getType(), colValue);
+    protected Object convertToEntityAttribute_Embeddable(Object entity, FieldRepresentation fieldRepresentation, Object colValue) {
+        return toEntity(fieldRepresentation.getFieldType(), colValue);
     }
 
     @Override
-    protected Set getSetFieldValue(Object entity, FieldRepresentation fieldRepresentation, Class actualClass, Iterable iterable) {
+    protected Object convertToEntityAttribute_Collection_Entity(Object entity, GenericFieldRepresentation fieldRepresentation, Iterable iterable) {
         final Object itemValue = IterableUtils.get(iterable, 0);
-        if (itemValue instanceof String) {
+        final Class elementType = fieldRepresentation.getElementType();
+        final Collector collector = fieldRepresentation.getCollector();
+        if (itemValue instanceof String || itemValue instanceof ObjectId) {
             final LazyLoader lazyLoader = () -> {
-                log.debug("lazyLoaderEntity_Set[" + entity.getClass().getSimpleName() + "." + fieldRepresentation.getNativeField().getName() + "]");
-                return Jmongo.list(actualClass, iterable).collect(toSet());
+                log.debug("lazyLoaderEntity_Collection[" + entity.getClass().getSimpleName() + "." + fieldRepresentation.getFieldName() + "]");
+                return Jmongo.list(elementType, iterable).collect(collector);
             };
             final Enhancer enhancer = new Enhancer();
-            enhancer.setSuperclass(Set.class);
-            return (Set) enhancer.create(Set.class, lazyLoader);
+            final Class rawType = fieldRepresentation.getRawType();
+            enhancer.setSuperclass(rawType);
+            return enhancer.create(rawType, lazyLoader);
         }
-        return (Set) StreamSupport.stream(iterable.spliterator(), false)
-                .map(it -> toEntity(actualClass, it))
-                .collect(toSet());
+        return StreamSupport.stream(iterable.spliterator(), false)
+                .map(it -> toEntity(elementType, it))
+                .collect(collector);
     }
 
     @Override
-    protected List getListFieldValue(Object entity, FieldRepresentation fieldRepresentation, Class actualClass, Iterable iterable) {
-        final Object itemValue = IterableUtils.get(iterable, 0);
-        if (itemValue instanceof String) {
-            final LazyLoader lazyLoader = () -> {
-                log.debug("lazyLoaderEntity_List[" + entity.getClass().getSimpleName() + "." + fieldRepresentation.getNativeField().getName() + "]");
-                return Jmongo.list(actualClass, iterable).collect(toList());
+    protected Object convertToDatabaseColumn_Collection(Object entity, GenericFieldRepresentation fieldRepresentation, Iterable iterable) {
+        final ClassRepresentation<?> elementClassRepresentation = ClassRepresentations.create(fieldRepresentation.getElementType());
+        final Function function;
+        if (fieldRepresentation.isEntityField()) {
+            final String idFieldName = elementClassRepresentation.getId().map(FieldRepresentation::getFieldName).get();
+            function = element -> {
+                try {
+                    return PropertyUtils.getProperty(element, idFieldName);
+                } catch (Exception e) {
+                    throw new RuntimeException(e);
+                }
             };
-            final Enhancer enhancer = new Enhancer();
-            enhancer.setSuperclass(List.class);
-            return (List) enhancer.create(List.class, lazyLoader);
+        } else if (fieldRepresentation.isEmbeddableField()) {
+            function = element -> toDbData(new Document(), element);
+        } else {
+            function = Function.identity();
         }
-        return (List) StreamSupport.stream(iterable.spliterator(), false)
-                .map(it -> toEntity(actualClass, it))
-                .collect(toSet());
+        return StreamSupport.stream(iterable.spliterator(), false).map(function).collect(toList());
+    }
+
+    @Override
+    protected Object convertToDatabaseColumn_Embeddable(Object entity, FieldRepresentation fieldRepresentation, Object fieldValue) {
+        return toDbData(new Document(), fieldValue);
+    }
+
+    @SneakyThrows
+    @Override
+    protected Object convertToDatabaseColumn_SubEntity(Object entity, FieldRepresentation fieldRepresentation, Object fieldValue) {
+        final ClassRepresentation<?> fieldClassRepresentation = ClassRepresentations.create(fieldRepresentation.getFieldType());
+        final String idFieldName = fieldClassRepresentation.getId().map(FieldRepresentation::getFieldName).get();
+        return PropertyUtils.getProperty(fieldValue, idFieldName);
+    }
+
+    @Override
+    protected void setDatabaseColumnValue(Object entity, FieldRepresentation fieldRepresentation, Object dbData, Object colValue) {
+        final Document document = (Document) dbData;
+        final String colName = fieldRepresentation.isId() ? ID_COL : fieldRepresentation.getColName();
+        document.append(colName, colValue);
     }
 
     private static class Holder {

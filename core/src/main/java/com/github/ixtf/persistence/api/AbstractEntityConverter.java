@@ -1,15 +1,17 @@
 package com.github.ixtf.persistence.api;
 
 import com.github.ixtf.persistence.reflection.ClassRepresentation;
+import com.github.ixtf.persistence.reflection.ClassRepresentations;
 import com.github.ixtf.persistence.reflection.FieldRepresentation;
+import com.github.ixtf.persistence.reflection.GenericFieldRepresentation;
 import lombok.SneakyThrows;
+import org.apache.commons.beanutils.PropertyUtils;
 
 import javax.persistence.AttributeConverter;
-import java.lang.reflect.Field;
-import java.lang.reflect.ParameterizedType;
-import java.lang.reflect.Type;
-import java.util.List;
-import java.util.Set;
+import java.lang.reflect.InvocationTargetException;
+import java.util.function.Function;
+import java.util.stream.Collector;
+import java.util.stream.StreamSupport;
 
 /**
  * @author jzb 2019-02-18
@@ -19,36 +21,26 @@ public abstract class AbstractEntityConverter implements EntityConverter {
     @Override
     public <T> T toEntity(ClassRepresentation<T> classRepresentation, Object dbData) {
         final T entity = classRepresentation.getConstructor().newInstance();
-        classRepresentation.getFields().parallelStream().forEach(it -> {
+        classRepresentation.getFields().stream().forEach(it -> {
             final Object colValue = getColValue(it, dbData);
-            fillField(entity, it, colValue);
+            fillEntityAttribute(entity, it, colValue);
         });
         return entity;
     }
 
-    protected abstract Object getColValue(FieldRepresentation fieldRepresentation, Object dbValue);
-
     @SneakyThrows
-    private void fillField(Object entity, FieldRepresentation fieldRepresentation, Object colValue) {
-        final Field nativeField = fieldRepresentation.getNativeField();
-        final Class<?> nativeType = nativeField.getType();
+    private void fillEntityAttribute(Object entity, FieldRepresentation fieldRepresentation, Object colValue) {
+        final String fieldName = fieldRepresentation.getFieldName();
+        final Class<?> nativeType = fieldRepresentation.getFieldType();
         if (colValue == null) {
-            setFieldValue(entity, nativeField, nativeType, colValue);
+            setEntityAttributeValue(entity, fieldName, nativeType, colValue);
             return;
         }
 
-        final AttributeConverter attributeConverter = fieldRepresentation.getConverter()
-                .map(it -> {
-                    try {
-                        return CONVERTER_CACHE.get(it);
-                    } catch (Exception e) {
-                        throw new RuntimeException(e);
-                    }
-                })
-                .orElse(null);
+        final AttributeConverter attributeConverter = EntityConverter.attributeConverter(fieldRepresentation);
         if (attributeConverter != null) {
             final Object value = attributeConverter.convertToEntityAttribute(colValue);
-            setFieldValue(entity, nativeField, nativeType, value);
+            setEntityAttributeValue(entity, fieldName, nativeType, value);
             return;
         }
 
@@ -58,70 +50,132 @@ public abstract class AbstractEntityConverter implements EntityConverter {
                 throw new UnsupportedOperationException();
             }
             case SUBENTITY: {
-                final Object o = getSubEntityFieldValue(entity, fieldRepresentation, colValue);
-                nativeField.set(entity, o);
+                final Object o = convertToEntityAttribute_SubEntity(entity, fieldRepresentation, colValue);
+                PropertyUtils.setProperty(entity, fieldName, o);
                 return;
             }
             case EMBEDDABLE: {
-                final Object o = getEmbeddableFieldValue(entity, fieldRepresentation, colValue);
-                nativeField.set(entity, o);
+                final Object o = convertToEntityAttribute_Embeddable(entity, fieldRepresentation, colValue);
+                PropertyUtils.setProperty(entity, fieldName, o);
                 return;
             }
             case COLLECTION: {
-                final ParameterizedType parameterizedType = (ParameterizedType) nativeField.getGenericType();
-                final Type rawType = parameterizedType.getRawType();
-                final Class actualClass = (Class) parameterizedType.getActualTypeArguments()[0];
+                final GenericFieldRepresentation genericFieldRepresentation = (GenericFieldRepresentation) fieldRepresentation;
+                final Class elementType = genericFieldRepresentation.getElementType();
+                final Collector collector = genericFieldRepresentation.getCollector();
                 final Iterable iterable = (Iterable) colValue;
                 final Object o;
-                if (Set.class.equals(rawType)) {
-                    o = getSetFieldValue(entity, fieldRepresentation, actualClass, iterable);
+                if (genericFieldRepresentation.isEntityField()) {
+                    o = convertToEntityAttribute_Collection_Entity(entity, genericFieldRepresentation, iterable);
                 } else {
-                    o = getListFieldValue(entity, fieldRepresentation, actualClass, iterable);
+                    final Function function = genericFieldRepresentation.isEmbeddableField()
+                            ? it -> toEntity(elementType, it)
+                            : it -> ValueReaderDecorator.getInstance().read(elementType, it);
+                    o = StreamSupport.stream(iterable.spliterator(), false).map(function).collect(collector);
                 }
-                nativeField.set(entity, o);
+                PropertyUtils.setProperty(entity, fieldName, o);
                 return;
             }
             default: {
                 final ValueReaderDecorator valueReader = ValueReaderDecorator.getInstance();
                 final Object value = valueReader.read(nativeType, colValue);
-                setFieldValue(entity, nativeField, nativeType, value);
+                setEntityAttributeValue(entity, fieldName, nativeType, value);
                 return;
             }
         }
     }
 
-    protected abstract Object getSubEntityFieldValue(Object entity, FieldRepresentation fieldRepresentation, Object colValue);
-
-    protected abstract Object getEmbeddableFieldValue(Object entity, FieldRepresentation fieldRepresentation, Object colValue);
-
-    protected abstract Set getSetFieldValue(Object entity, FieldRepresentation fieldRepresentation, Class actualClass, Iterable colValue);
-
-    protected abstract List getListFieldValue(Object entity, FieldRepresentation fieldRepresentation, Class actualClass, Iterable colValue);
-
-    protected void setFieldValue(Object entity, Field nativeField, Class<?> nativeType, Object value) throws IllegalAccessException {
+    protected void setEntityAttributeValue(Object entity, String fieldName, Class<?> nativeType, Object value) throws IllegalAccessException, InvocationTargetException, NoSuchMethodException {
         if (value == null) {
             if (!nativeType.isPrimitive()) {
-                nativeField.set(entity, value);
+                PropertyUtils.setProperty(entity, fieldName, value);
             }
             return;
         }
 
         if (byte.class.equals(nativeType)) {
-            nativeField.set(entity, ((Number) value).byteValue());
+            PropertyUtils.setProperty(entity, fieldName, ((Number) value).byteValue());
         } else if (short.class.equals(nativeType)) {
-            nativeField.set(entity, ((Number) value).shortValue());
+            PropertyUtils.setProperty(entity, fieldName, ((Number) value).shortValue());
         } else if (int.class.equals(nativeType)) {
-            nativeField.set(entity, ((Number) value).intValue());
+            PropertyUtils.setProperty(entity, fieldName, ((Number) value).intValue());
         } else if (long.class.equals(nativeType)) {
-            nativeField.set(entity, ((Number) value).longValue());
+            PropertyUtils.setProperty(entity, fieldName, ((Number) value).longValue());
         } else if (float.class.equals(nativeType)) {
-            nativeField.set(entity, ((Number) value).floatValue());
+            PropertyUtils.setProperty(entity, fieldName, ((Number) value).floatValue());
         } else if (double.class.equals(nativeType)) {
-            nativeField.set(entity, ((Number) value).doubleValue());
+            PropertyUtils.setProperty(entity, fieldName, ((Number) value).doubleValue());
         } else if (boolean.class.equals(nativeType)) {
-            nativeField.set(entity, ((Boolean) value).booleanValue());
+            PropertyUtils.setProperty(entity, fieldName, ((Boolean) value).booleanValue());
         } else {
-            nativeField.set(entity, value);
+            PropertyUtils.setProperty(entity, fieldName, value);
         }
     }
+
+    protected abstract Object getColValue(FieldRepresentation fieldRepresentation, Object dbValue);
+
+    protected abstract Object convertToEntityAttribute_SubEntity(Object entity, FieldRepresentation fieldRepresentation, Object colValue);
+
+    protected abstract Object convertToEntityAttribute_Embeddable(Object entity, FieldRepresentation fieldRepresentation, Object colValue);
+
+    protected abstract Object convertToEntityAttribute_Collection_Entity(Object entity, GenericFieldRepresentation fieldRepresentation, Iterable colValue);
+
+    @SneakyThrows
+    @Override
+    public <T> T toDbData(T dbData, Object entity) {
+        final ClassRepresentation<?> classRepresentation = ClassRepresentations.create(entity);
+        classRepresentation.getFields().forEach(it -> fillDatabaseColumn(entity, it, dbData));
+        return dbData;
+    }
+
+    @SneakyThrows
+    private void fillDatabaseColumn(Object entity, FieldRepresentation fieldRepresentation, Object dbData) {
+        final String fieldName = fieldRepresentation.getFieldName();
+        final Object fieldValue = PropertyUtils.getProperty(entity, fieldName);
+        if (fieldValue == null) {
+            setDatabaseColumnValue(entity, fieldRepresentation, dbData, fieldValue);
+            return;
+        }
+
+        final AttributeConverter attributeConverter = EntityConverter.attributeConverter(fieldRepresentation);
+        if (attributeConverter != null) {
+            final Object colValue = attributeConverter.convertToDatabaseColumn(fieldValue);
+            setDatabaseColumnValue(entity, fieldRepresentation, dbData, colValue);
+            return;
+        }
+
+        switch (fieldRepresentation.getType()) {
+            case MAP: {
+                // todo 后续支持
+                throw new UnsupportedOperationException();
+            }
+            case SUBENTITY: {
+                final Object o = convertToDatabaseColumn_SubEntity(entity, fieldRepresentation, fieldValue);
+                setDatabaseColumnValue(entity, fieldRepresentation, dbData, o);
+                return;
+            }
+            case EMBEDDABLE: {
+                final Object o = convertToDatabaseColumn_Embeddable(entity, fieldRepresentation, fieldValue);
+                setDatabaseColumnValue(entity, fieldRepresentation, dbData, o);
+                return;
+            }
+            case COLLECTION: {
+                final Object o = convertToDatabaseColumn_Collection(entity, (GenericFieldRepresentation) fieldRepresentation, (Iterable) fieldValue);
+                setDatabaseColumnValue(entity, fieldRepresentation, dbData, o);
+                return;
+            }
+            default: {
+                setDatabaseColumnValue(entity, fieldRepresentation, dbData, fieldValue);
+                return;
+            }
+        }
+    }
+
+    protected abstract void setDatabaseColumnValue(Object entity, FieldRepresentation fieldRepresentation, Object dbData, Object colValue);
+
+    protected abstract Object convertToDatabaseColumn_Collection(Object entity, GenericFieldRepresentation fieldRepresentation, Iterable iterable);
+
+    protected abstract Object convertToDatabaseColumn_Embeddable(Object entity, FieldRepresentation fieldRepresentation, Object fieldValue);
+
+    protected abstract Object convertToDatabaseColumn_SubEntity(Object entity, FieldRepresentation fieldRepresentation, Object fieldValue);
 }

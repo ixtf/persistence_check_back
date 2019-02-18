@@ -19,6 +19,10 @@ public interface ClassRepresentation<T> {
 
     Optional<FieldRepresentation> getId();
 
+    default boolean hasId() {
+        return getId().isPresent();
+    }
+
     List<FieldRepresentation> getFields();
 
 }
